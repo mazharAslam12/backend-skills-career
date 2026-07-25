@@ -145,6 +145,7 @@ router.post("/google", async (req, res) => {
         banner: user.banner || "",
         phone: user.phone || "",
         role: user.role || "Full Stack Developer",
+        level: user.level || 1,
         description: user.description || "",
         skills: user.skills || [],
         socials: user.socials || {},
@@ -160,12 +161,14 @@ router.post("/google", async (req, res) => {
 router.post("/github", async (req, res) => {
   try {
     const { githubId, name, email, avatar, username } = req.body;
-    if (!githubId && !email) {
-      return res.status(400).json({ message: "GitHub account details are required" });
+    if (!email && !githubId) {
+      return res.status(400).json({ message: "Email or githubId is required" });
     }
 
-    const normalizedEmail = (email || `${username || githubId}@github.com`).toLowerCase().trim();
-    let user = await User.findOne({ $or: [{ githubId }, { email: normalizedEmail }] });
+    const normalizedEmail = (email || `${username || githubId}@users.noreply.github.com`).toLowerCase().trim();
+    let user = await User.findOne({
+      $or: [{ githubId: String(githubId) }, { email: normalizedEmail }],
+    });
 
     if (!user) {
       user = await User.create({
@@ -176,13 +179,12 @@ router.post("/github", async (req, res) => {
         githubId: String(githubId),
         emailVerified: true,
         isApproved: true,
-        level: 1,
       });
     } else {
       user.name = name || user.name;
       user.avatar = avatar || user.avatar;
       user.provider = "github";
-      if (githubId) user.githubId = String(githubId);
+      user.githubId = String(githubId) || user.githubId;
       await user.save();
     }
 
@@ -195,7 +197,7 @@ router.post("/github", async (req, res) => {
         banner: user.banner || "",
         phone: user.phone || "",
         role: user.role || "Full Stack Developer",
-        level: Number(user.level) || 1,
+        level: user.level || 1,
         description: user.description || "",
         skills: user.skills || [],
         socials: user.socials || {},
@@ -220,7 +222,7 @@ router.get("/users", async (req, res) => {
         banner: user.banner || "",
         phone: user.phone || "",
         role: user.role || "Full Stack Developer",
-        level: Number(user.level) || 1,
+        level: user.level || 1,
         description: user.description || "",
         skills: user.skills || [],
         socials: user.socials || {},
@@ -247,8 +249,8 @@ router.put("/users/:id", async (req, res) => {
     if (phone !== undefined) user.phone = phone;
     if (name !== undefined) user.name = name;
     if (email !== undefined) user.email = email.toLowerCase().trim();
-    if (level !== undefined) user.level = Number(level);
     if (studentDetails !== undefined) user.studentDetails = studentDetails;
+    if (level !== undefined) user.level = level;
 
     await user.save();
     res.json({ message: "User updated successfully", user });
