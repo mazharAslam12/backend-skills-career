@@ -210,6 +210,88 @@ router.post("/github", async (req, res) => {
   }
 });
 
+// GitHub OAuth Proxy: exchange code for token + user profile on backend (CORS-safe)
+router.post("/github-oauth", async (req, res) => {
+  try {
+    const { code, client_id, client_secret } = req.body;
+    if (!code) return res.status(400).json({ message: "Authorization code is required" });
+
+    const cid = client_id || process.env.VITE_GITHUB_CLIENT_ID || "Ov23liDV03AD0rG4A1wy";
+    const csec = client_secret || process.env.VITE_GITHUB_CLIENT_SECRET || "5e13ca4416f217448e32eb75bace019930a63370";
+
+    // Step 1: exchange code for access_token
+    const tokenRes = await fetch("https://github.com/login/oauth/access_token", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ client_id: cid, client_secret: csec, code }),
+    });
+    const tokenData = await tokenRes.json();
+
+    if (tokenData.error || !tokenData.access_token) {
+      return res.status(400).json({ message: tokenData.error_description || "Failed to get GitHub access token. The code may have expired — please try again." });
+    }
+
+    const accessToken = tokenData.access_token;
+
+    // Step 2: fetch GitHub user profile
+    const userRes = await fetch("https://api.github.com/user", {
+      headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": "skills-career-app", Accept: "application/vnd.github+json" },
+    });
+    const ghUser = await userRes.json();
+
+    // Step 3: fetch primary email if profile email is private
+    let email = ghUser.email;
+    if (!email) {
+      try {
+        const emailsRes = await fetch("https://api.github.com/user/emails", {
+          headers: { Authorization: `Bearer ${accessToken}`, "User-Agent": "skills-career-app", Accept: "application/vnd.github+json" },
+        });
+        const emails = await emailsRes.json();
+        if (Array.isArray(emails)) {
+          const primary = emails.find((e) => e.primary && e.verified);
+          email = primary?.email || emails[0]?.email;
+        }
+      } catch (_) {}
+    }
+    if (!email) email = `${ghUser.login}@users.noreply.github.com`;
+
+    // Step 4: upsert user in MongoDB
+    const normalizedEmail = email.toLowerCase().trim();
+    let user = await User.findOne({ $or: [{ githubId: String(ghUser.id) }, { email: normalizedEmail }] });
+    if (!user) {
+      user = await User.create({
+        name: ghUser.name || ghUser.login,
+        email: normalizedEmail,
+        avatar: ghUser.avatar_url,
+        provider: "github",
+        githubId: String(ghUser.id),
+        emailVerified: true,
+        isApproved: true,
+      });
+    } else {
+      user.name = ghUser.name || ghUser.login || user.name;
+      user.avatar = ghUser.avatar_url || user.avatar;
+      user.provider = "github";
+      user.githubId = String(ghUser.id);
+      await user.save();
+    }
+
+    return res.json({
+      access_token: accessToken,
+      user: {
+        githubId: String(ghUser.id),
+        name: ghUser.name || ghUser.login,
+        email: normalizedEmail,
+        avatar: ghUser.avatar_url,
+        username: ghUser.login,
+      },
+    });
+  } catch (error) {
+    console.error("GitHub OAuth Proxy Error:", error);
+    return res.status(500).json({ message: "GitHub OAuth proxy failed", error: error.message });
+  }
+});
+
 router.get("/users", async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
