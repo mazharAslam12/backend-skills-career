@@ -60,18 +60,23 @@ router.post("/:collection", async (req, res) => {
 router.put("/:collection/:id", async (req, res) => {
   try {
     const { assignedTo, fileData, fileName, ...data } = req.body;
-    const updatePayload = { 
-      data, 
-      collectionName: req.params.collection.toLowerCase() 
-    };
-    
-    if (assignedTo !== undefined) updatePayload.assignedTo = assignedTo;
-    if (fileData !== undefined) updatePayload.fileData = fileData;
-    if (fileName !== undefined) updatePayload.fileName = fileName;
+
+    // Build $set using dot-notation to PATCH individual fields inside data,
+    // NOT replace the whole data object (which would wipe senderId, content, etc.)
+    const setFields = {};
+    Object.keys(data).forEach(key => {
+      setFields[`data.${key}`] = data[key];
+    });
+
+    // Also update top-level fields if provided
+    setFields.collectionName = req.params.collection.toLowerCase();
+    if (assignedTo !== undefined) setFields.assignedTo = assignedTo;
+    if (fileData !== undefined) setFields.fileData = fileData;
+    if (fileName !== undefined) setFields.fileName = fileName;
 
     const updated = await CollectionItem.findByIdAndUpdate(
       req.params.id,
-      updatePayload,
+      { $set: setFields },
       { new: true, runValidators: true },
     );
     if (!updated) {
