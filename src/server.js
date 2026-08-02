@@ -22,12 +22,21 @@ app.use(async (req, res, next) => {
   }
 });
 
-app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+// Enhanced CORS Middleware & Preflight Handling
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
+}));
 
-// Resolve Google Login COOP issue
 app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
   res.setHeader("Cross-Origin-Opener-Policy", "same-origin-allow-popups");
+  if (req.method === "OPTIONS") {
+    return res.sendStatus(200);
+  }
   next();
 });
 

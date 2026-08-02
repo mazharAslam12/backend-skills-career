@@ -4,6 +4,19 @@ import CollectionItem from "../models/CollectionItem.js";
 
 const router = express.Router();
 
+// ── Inline CORS per-route fallback (Vercel header middleware may be bypassed) ──
+const addCors = (res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS, PATCH");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+};
+
+// Handle CORS preflight for all collection routes
+router.options("*", (req, res) => {
+  addCors(res);
+  res.sendStatus(200);
+});
+
 const formatItem = (item) => ({
   _mongoId: item._id.toString(),
   ...item.data,
@@ -25,6 +38,7 @@ const findCollectionItem = async (collection, id) => {
 };
 
 router.get("/:collection", async (req, res) => {
+  addCors(res);
   try {
     const collection = req.params.collection.toLowerCase();
     const userId = req.query.userId;
@@ -47,6 +61,7 @@ router.get("/:collection", async (req, res) => {
 });
 
 router.post("/:collection", async (req, res) => {
+  addCors(res);
   try {
     const collection = req.params.collection.toLowerCase();
     const { assignedTo, fileData, fileName, ...data } = req.body;
@@ -65,6 +80,7 @@ router.post("/:collection", async (req, res) => {
 });
 
 router.put("/:collection/:id", async (req, res) => {
+  addCors(res);
   try {
     const { assignedTo, fileData, fileName, ...data } = req.body;
 
@@ -102,6 +118,7 @@ router.put("/:collection/:id", async (req, res) => {
 });
 
 router.delete("/:collection/:id", async (req, res) => {
+  addCors(res);
   try {
     const collection = req.params.collection.toLowerCase();
     const existing = await findCollectionItem(collection, req.params.id);
