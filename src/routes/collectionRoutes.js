@@ -1,7 +1,28 @@
 import express from "express";
+import mongoose from "mongoose";
 import CollectionItem from "../models/CollectionItem.js";
 
 const router = express.Router();
+
+const formatItem = (item) => ({
+  _mongoId: item._id.toString(),
+  ...item.data,
+  id: item.data?.id || item._id.toString(),
+  assignedTo: item.assignedTo,
+  fileName: item.fileName,
+  fileData: item.fileData,
+});
+
+const findCollectionItem = async (collection, id) => {
+  if (mongoose.Types.ObjectId.isValid(id) && String(new mongoose.Types.ObjectId(id)) === id) {
+    const byMongoId = await CollectionItem.findOne({
+      _id: id,
+      collectionName: collection,
+    });
+    if (byMongoId) return byMongoId;
+  }
+  return CollectionItem.findOne({ collectionName: collection, "data.id": id });
+};
 
 router.get("/:collection", async (req, res) => {
   try {
@@ -19,15 +40,7 @@ router.get("/:collection", async (req, res) => {
     }
 
     const items = await CollectionItem.find(query).sort({ createdAt: -1 });
-    res.json(
-      items.map((item) => ({
-        id: item._id.toString(),
-        assignedTo: item.assignedTo,
-        fileName: item.fileName,
-        fileData: item.fileData,
-        ...item.data,
-      })),
-    );
+    res.json(items.map(formatItem));
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch collection items", error: error.message });
   }
@@ -45,13 +58,7 @@ router.post("/:collection", async (req, res) => {
       fileData: fileData || null,
       fileName: fileName || null,
     });
-    res.status(201).json({
-      id: item._id.toString(),
-      assignedTo: item.assignedTo,
-      fileName: item.fileName,
-      fileData: item.fileData,
-      ...item.data,
-    });
+    res.status(201).json(formatItem(item));
   } catch (error) {
     res.status(400).json({ message: "Failed to create collection item", error: error.message });
   }
@@ -74,21 +81,21 @@ router.put("/:collection/:id", async (req, res) => {
     if (fileData !== undefined) setFields.fileData = fileData;
     if (fileName !== undefined) setFields.fileName = fileName;
 
+    const collection = req.params.collection.toLowerCase();
+    const existing = await findCollectionItem(collection, req.params.id);
+    if (!existing) {
+      return res.status(404).json({ message: "Collection item not found" });
+    }
+
     const updated = await CollectionItem.findByIdAndUpdate(
-      req.params.id,
+      existing._id,
       { $set: setFields },
       { new: true, runValidators: true },
     );
     if (!updated) {
       return res.status(404).json({ message: "Collection item not found" });
     }
-    return res.json({
-      id: updated._id.toString(),
-      assignedTo: updated.assignedTo,
-      fileName: updated.fileName,
-      fileData: updated.fileData,
-      ...updated.data,
-    });
+    return res.json(formatItem(updated));
   } catch (error) {
     return res.status(400).json({ message: "Failed to update collection item", error: error.message });
   }
@@ -96,10 +103,12 @@ router.put("/:collection/:id", async (req, res) => {
 
 router.delete("/:collection/:id", async (req, res) => {
   try {
-    const deleted = await CollectionItem.findByIdAndDelete(req.params.id);
-    if (!deleted) {
+    const collection = req.params.collection.toLowerCase();
+    const existing = await findCollectionItem(collection, req.params.id);
+    if (!existing) {
       return res.status(404).json({ message: "Collection item not found" });
     }
+    await CollectionItem.findByIdAndDelete(existing._id);
     return res.json({ message: "Collection item deleted successfully" });
   } catch (error) {
     return res.status(500).json({ message: "Failed to delete collection item", error: error.message });
