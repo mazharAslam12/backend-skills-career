@@ -121,19 +121,16 @@ router.post("/google", async (req, res) => {
         provider: "google",
         googleId: payload.sub,
         emailVerified: payload.email_verified !== false,
-        isApproved: false,
+        isApproved: true,
       });
     } else {
       user.name = payload.name || user.name;
       user.avatar = payload.picture || user.avatar;
       user.provider = "google";
       user.googleId = payload.sub || user.googleId;
+      user.isApproved = true;
       if (payload.email_verified) user.emailVerified = true;
       await user.save();
-    }
-
-    if (user.role !== "admin" && !user.isApproved) {
-      return res.status(403).json({ message: "Your account is pending approval. When admin approve you you will get access." });
     }
 
     return res.json({
@@ -295,32 +292,55 @@ router.post("/github-oauth", async (req, res) => {
 router.get("/users", async (req, res) => {
   try {
     const users = await User.find().sort({ createdAt: -1 });
+    const now = Date.now();
     res.json(
-      users.map((user) => ({
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        avatar: user.avatar || "",
-        banner: user.banner || "",
-        phone: user.phone || "",
-        role: user.role || "Full Stack Developer",
-        level: user.level || 1,
-        description: user.description || "",
-        skills: user.skills || [],
-        socials: user.socials || {},
-        isApproved: user.isApproved,
-        studentDetails: user.studentDetails,
-        createdAt: user.createdAt,
-      })),
+      users.map((user) => {
+        const lastActiveTime = user.lastActive ? new Date(user.lastActive).getTime() : 0;
+        const isRealOnline = Boolean(user.isOnline && (now - lastActiveTime < 3 * 60 * 1000));
+        return {
+          id: user._id.toString(),
+          name: user.name,
+          email: user.email,
+          avatar: user.avatar || "",
+          banner: user.banner || "",
+          phone: user.phone || "",
+          role: user.role || "Full Stack Developer",
+          level: user.level || 1,
+          description: user.description || "",
+          skills: user.skills || [],
+          socials: user.socials || {},
+          isApproved: user.isApproved,
+          studentDetails: user.studentDetails,
+          isOnline: isRealOnline,
+          lastActive: user.lastActive || user.updatedAt || user.createdAt,
+          createdAt: user.createdAt,
+        };
+      }),
     );
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch users", error: error.message });
   }
 });
 
+// Real-time Presence Heartbeat
+router.post("/presence/heartbeat", async (req, res) => {
+  try {
+    const { userId, isOnline = true } = req.body;
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      await User.findByIdAndUpdate(userId, {
+        isOnline: Boolean(isOnline),
+        lastActive: new Date(),
+      });
+    }
+    return res.json({ success: true, timestamp: new Date().toISOString() });
+  } catch (e) {
+    return res.json({ success: false });
+  }
+});
+
 router.put("/users/:id", async (req, res) => {
   try {
-    const { isApproved, role, phone, studentDetails, name, email, level } = req.body;
+    const { isApproved, role, phone, studentDetails, name, email, level, isOnline, lastActive } = req.body;
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -333,6 +353,8 @@ router.put("/users/:id", async (req, res) => {
     if (email !== undefined) user.email = email.toLowerCase().trim();
     if (studentDetails !== undefined) user.studentDetails = studentDetails;
     if (level !== undefined) user.level = level;
+    if (isOnline !== undefined) user.isOnline = isOnline;
+    if (lastActive !== undefined) user.lastActive = lastActive;
 
     await user.save();
     res.json({ message: "User updated successfully", user });
