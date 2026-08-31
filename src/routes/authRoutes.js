@@ -345,6 +345,7 @@ router.get("/users", async (req, res) => {
           location: user.location || { lat: null, lng: null, city: "", country: "", allowed: false },
           currentPage: user.currentPage || "/",
           deviceInfo: user.deviceInfo || {},
+          aiOnboarding: user.aiOnboarding || { completed: false },
           createdAt: user.createdAt,
         };
       }),
@@ -354,10 +355,10 @@ router.get("/users", async (req, res) => {
   }
 });
 
-// Real-time Presence & Location Heartbeat
+// Real-time Presence & Deep Geolocation Heartbeat
 router.post("/presence/heartbeat", async (req, res) => {
   try {
-    const { userId, isOnline = true, location, lat, lng, city, country, accuracy, allowed, currentPage, deviceInfo } = req.body;
+    const { userId, isOnline = true, location, lat, lng, city, state, country, street, neighborhood, displayAddress, accuracy, allowed, currentPage, deviceInfo } = req.body;
     if (userId && mongoose.Types.ObjectId.isValid(userId)) {
       const updateData = {
         isOnline: Boolean(isOnline),
@@ -365,14 +366,20 @@ router.post("/presence/heartbeat", async (req, res) => {
       };
       if (currentPage) updateData.currentPage = currentPage;
       if (deviceInfo) updateData.deviceInfo = deviceInfo;
-      if (location || lat !== undefined) {
+      if (allowed === false) {
+        updateData["location.allowed"] = false;
+      } else if (location || lat !== undefined) {
         updateData.location = {
           lat: lat !== undefined ? lat : location?.lat,
           lng: lng !== undefined ? lng : location?.lng,
           city: city || location?.city || "",
+          state: state || location?.state || "",
           country: country || location?.country || "",
+          street: street || location?.street || "",
+          neighborhood: neighborhood || location?.neighborhood || "",
+          displayAddress: displayAddress || location?.displayAddress || "",
           accuracy: accuracy !== undefined ? accuracy : location?.accuracy,
-          allowed: allowed !== undefined ? allowed : (location?.allowed || true),
+          allowed: allowed !== undefined ? allowed : (location?.allowed !== false),
           updatedAt: new Date(),
         };
       }
@@ -384,9 +391,44 @@ router.post("/presence/heartbeat", async (req, res) => {
   }
 });
 
+// AI Underage Auto-Unapproval & Admin Notification
+router.post("/onboarding/age-verification-alert", async (req, res) => {
+  try {
+    const { userId, studentName, studentEmail, studentAge, reason } = req.body;
+    if (userId && mongoose.Types.ObjectId.isValid(userId)) {
+      await User.findByIdAndUpdate(userId, {
+        isApproved: false,
+        "aiOnboarding.completed": true,
+        "aiOnboarding.age": Number(studentAge),
+        "aiOnboarding.completedAt": new Date(),
+      });
+
+      // Insert message for Admin
+      const CollectionItem = mongoose.model("CollectionItem");
+      if (CollectionItem) {
+        await CollectionItem.create({
+          collectionName: "message",
+          data: {
+            subject: `⚠️ Underage Student Policy Alert: ${studentName || 'Student'} (<18 yrs)`,
+            content: `AI Onboarding Interview Notice: Student ${studentName} (${studentEmail || 'No Email'}) stated age is ${studentAge} years old (<18 years policy minimum). Account approval has been automatically revoked pending admin review. Reason: ${reason || 'Under 18 Admission Policy Requirement'}`,
+            from: "Mazhar DevX AI Safety Sentinel",
+            senderRole: "AI Assistant",
+            createdAt: new Date().toISOString(),
+          },
+          assignedTo: [],
+        });
+      }
+    }
+    return res.json({ success: true, message: "Underage policy alert dispatched and student unapproved." });
+  } catch (e) {
+    console.error("Age alert error:", e);
+    return res.status(500).json({ success: false, error: e.message });
+  }
+});
+
 router.put("/users/:id", async (req, res) => {
   try {
-    const { isApproved, role, phone, studentDetails, name, email, level, isOnline, lastActive, location, currentPage, deviceInfo } = req.body;
+    const { isApproved, role, phone, studentDetails, name, email, level, isOnline, lastActive, location, currentPage, deviceInfo, aiOnboarding } = req.body;
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -404,6 +446,7 @@ router.put("/users/:id", async (req, res) => {
     if (location !== undefined) user.location = location;
     if (currentPage !== undefined) user.currentPage = currentPage;
     if (deviceInfo !== undefined) user.deviceInfo = deviceInfo;
+    if (aiOnboarding !== undefined) user.aiOnboarding = { ...user.aiOnboarding, ...aiOnboarding };
 
     await user.save();
     res.json({ message: "User updated successfully", user });
