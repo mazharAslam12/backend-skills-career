@@ -61,31 +61,71 @@ router.delete("/:id", async (req, res) => {
 });
 
 import User from "../models/User.js";
+import CollectionItem from "../models/CollectionItem.js";
+
+const toSlug = (text) => (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
 
 router.get("/sitemap.xml", async (req, res) => {
   try {
-    const users = await User.find({}, "_id updatedAt avatar name").limit(1000);
     const baseUrl = process.env.FRONTEND_URL || "https://skills-career.netlify.app";
+    const users = await User.find({}, "_id name avatar banner updatedAt createdAt").limit(2000);
+    const blogItems = await CollectionItem.find({ collectionName: "blogs" }).limit(50000);
+
+    const staticRoutes = [
+      { url: "/", priority: "1.0", changefreq: "daily" },
+      { url: "/about", priority: "0.95", changefreq: "weekly" },
+      { url: "/courses", priority: "0.95", changefreq: "weekly" },
+      { url: "/curriculum", priority: "0.95", changefreq: "weekly" },
+      { url: "/admissions", priority: "0.90", changefreq: "weekly" },
+      { url: "/blogs", priority: "0.98", changefreq: "hourly" },
+      { url: "/faq", priority: "0.85", changefreq: "monthly" },
+      { url: "/contact", priority: "0.85", changefreq: "monthly" },
+      { url: "/login", priority: "0.80", changefreq: "monthly" },
+      { url: "/register", priority: "0.80", changefreq: "monthly" },
+      { url: "/terms", priority: "0.50", changefreq: "yearly" },
+      { url: "/privacy", priority: "0.50", changefreq: "yearly" },
+    ];
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
     xml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
     
-    xml += `  <url><loc>${baseUrl}/</loc><changefreq>daily</changefreq><priority>1.0</priority></url>\n`;
-    xml += `  <url><loc>${baseUrl}/login</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>\n`;
-    xml += `  <url><loc>${baseUrl}/register</loc><changefreq>weekly</changefreq><priority>0.9</priority></url>\n`;
-    xml += `  <url><loc>${baseUrl}/dashboard</loc><changefreq>daily</changefreq><priority>0.8</priority></url>\n`;
+    staticRoutes.forEach(r => {
+      xml += `  <url><loc>${baseUrl}${r.url}</loc><changefreq>${r.changefreq}</changefreq><priority>${r.priority}</priority></url>\n`;
+    });
+
+    blogItems.forEach((item) => {
+      const bData = item.data || {};
+      const blogId = bData.id || item._id.toString();
+      const slug = toSlug(bData.title) || blogId;
+      const lastMod = (item.updatedAt || item.createdAt || new Date()).toISOString();
+      const title = bData.title || "Blog Article";
+      const image = bData.image || item.fileData || "";
+
+      xml += `  <url>\n`;
+      xml += `    <loc>${baseUrl}/blogs/${slug}</loc>\n`;
+      xml += `    <lastmod>${lastMod}</lastmod>\n`;
+      xml += `    <changefreq>daily</changefreq>\n`;
+      xml += `    <priority>0.95</priority>\n`;
+      if (image && image.startsWith("http")) {
+        xml += `    <image:image>\n`;
+        xml += `      <image:loc>${encodeURI(image)}</image:loc>\n`;
+        xml += `      <image:title><![CDATA[${title}]]></image:title>\n`;
+        xml += `    </image:image>\n`;
+      }
+      xml += `  </url>\n`;
+    });
 
     users.forEach((u) => {
-      const lastMod = u.updatedAt ? new Date(u.updatedAt).toISOString().split('T')[0] : '2026-07-25';
+      const lastMod = (u.updatedAt || u.createdAt || new Date()).toISOString();
       xml += `  <url>\n`;
       xml += `    <loc>${baseUrl}/student/${u._id}</loc>\n`;
       xml += `    <lastmod>${lastMod}</lastmod>\n`;
       xml += `    <changefreq>daily</changefreq>\n`;
-      xml += `    <priority>0.8</priority>\n`;
-      if (u.avatar) {
+      xml += `    <priority>0.85</priority>\n`;
+      if (u.avatar && u.avatar.startsWith("http")) {
         xml += `    <image:image>\n`;
-        xml += `      <image:loc>${u.avatar}</image:loc>\n`;
-        xml += `      <image:title>${u.name || "Student"} - Skills Career Profile Image</image:title>\n`;
+        xml += `      <image:loc>${encodeURI(u.avatar)}</image:loc>\n`;
+        xml += `      <image:title><![CDATA[${u.name || "Student"} - Skills Career Profile Image]]></image:title>\n`;
         xml += `    </image:image>\n`;
       }
       xml += `  </url>\n`;
@@ -93,7 +133,8 @@ router.get("/sitemap.xml", async (req, res) => {
 
     xml += `</urlset>`;
 
-    res.header("Content-Type", "application/xml");
+    res.header("Content-Type", "application/xml; charset=utf-8");
+    res.header("Cache-Control", "public, max-age=3600, s-maxage=3600");
     return res.send(xml);
   } catch (error) {
     return res.status(500).send("Error generating sitemap");

@@ -87,6 +87,23 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: Date.now,
     },
+    location: {
+      lat: { type: Number, default: null },
+      lng: { type: Number, default: null },
+      city: { type: String, default: "" },
+      country: { type: String, default: "" },
+      accuracy: { type: Number, default: null },
+      allowed: { type: Boolean, default: false },
+      updatedAt: { type: Date, default: Date.now },
+    },
+    currentPage: {
+      type: String,
+      default: "/",
+    },
+    deviceInfo: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
   },
   { timestamps: true },
 );

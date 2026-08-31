@@ -60,8 +60,8 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "This account uses Google sign-in. Continue with Google." });
     }
 
-    if (user.role !== "admin" && !user.isApproved) {
-      return res.status(403).json({ message: "Your account is pending approval. When admin approve you you will get access." });
+    if (user.role !== "admin" && user.email !== "mazhar@gmail.com" && !user.isApproved) {
+      return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     if (user.password !== password) {
@@ -82,6 +82,9 @@ router.post("/login", async (req, res) => {
         skills: user.skills || [],
         socials: user.socials || {},
         studentDetails: user.studentDetails,
+        isApproved: user.isApproved,
+        location: user.location,
+        currentPage: user.currentPage,
       },
     });
   } catch (error) {
@@ -111,6 +114,7 @@ router.post("/google", async (req, res) => {
     }
 
     const normalizedEmail = payload.email.toLowerCase().trim();
+    const isAdmin = normalizedEmail === "mazhar@gmail.com";
     let user = await User.findOne({ email: normalizedEmail });
 
     if (!user) {
@@ -121,16 +125,20 @@ router.post("/google", async (req, res) => {
         provider: "google",
         googleId: payload.sub,
         emailVerified: payload.email_verified !== false,
-        isApproved: true,
+        isApproved: isAdmin,
       });
     } else {
       user.name = payload.name || user.name;
       user.avatar = payload.picture || user.avatar;
       user.provider = "google";
       user.googleId = payload.sub || user.googleId;
-      user.isApproved = true;
+      if (isAdmin) user.isApproved = true;
       if (payload.email_verified) user.emailVerified = true;
       await user.save();
+    }
+
+    if (!isAdmin && user.role !== "admin" && !user.isApproved) {
+      return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     return res.json({
@@ -147,6 +155,9 @@ router.post("/google", async (req, res) => {
         skills: user.skills || [],
         socials: user.socials || {},
         studentDetails: user.studentDetails,
+        isApproved: user.isApproved,
+        location: user.location,
+        currentPage: user.currentPage,
       },
     });
   } catch (error) {
@@ -163,6 +174,7 @@ router.post("/github", async (req, res) => {
     }
 
     const normalizedEmail = (email || `${username || githubId}@users.noreply.github.com`).toLowerCase().trim();
+    const isAdmin = normalizedEmail === "mazhar@gmail.com";
     let user = await User.findOne({
       $or: [{ githubId: String(githubId) }, { email: normalizedEmail }],
     });
@@ -175,14 +187,19 @@ router.post("/github", async (req, res) => {
         provider: "github",
         githubId: String(githubId),
         emailVerified: true,
-        isApproved: true,
+        isApproved: isAdmin,
       });
     } else {
       user.name = name || user.name;
       user.avatar = avatar || user.avatar;
       user.provider = "github";
       user.githubId = String(githubId) || user.githubId;
+      if (isAdmin) user.isApproved = true;
       await user.save();
+    }
+
+    if (!isAdmin && user.role !== "admin" && !user.isApproved) {
+      return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     return res.json({
@@ -199,6 +216,9 @@ router.post("/github", async (req, res) => {
         skills: user.skills || [],
         socials: user.socials || {},
         studentDetails: user.studentDetails,
+        isApproved: user.isApproved,
+        location: user.location,
+        currentPage: user.currentPage,
       },
     });
   } catch (error) {
@@ -254,6 +274,7 @@ router.post("/github-oauth", async (req, res) => {
 
     // Step 4: upsert user in MongoDB
     const normalizedEmail = email.toLowerCase().trim();
+    const isAdmin = normalizedEmail === "mazhar@gmail.com";
     let user = await User.findOne({ $or: [{ githubId: String(ghUser.id) }, { email: normalizedEmail }] });
     if (!user) {
       user = await User.create({
@@ -263,24 +284,32 @@ router.post("/github-oauth", async (req, res) => {
         provider: "github",
         githubId: String(ghUser.id),
         emailVerified: true,
-        isApproved: true,
+        isApproved: isAdmin,
       });
     } else {
       user.name = ghUser.name || ghUser.login || user.name;
       user.avatar = ghUser.avatar_url || user.avatar;
       user.provider = "github";
       user.githubId = String(ghUser.id);
+      if (isAdmin) user.isApproved = true;
       await user.save();
+    }
+
+    if (!isAdmin && user.role !== "admin" && !user.isApproved) {
+      return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     return res.json({
       access_token: accessToken,
       user: {
         githubId: String(ghUser.id),
+        id: user._id.toString(),
         name: ghUser.name || ghUser.login,
         email: normalizedEmail,
         avatar: ghUser.avatar_url,
         username: ghUser.login,
+        role: user.role || "Full Stack Developer",
+        isApproved: user.isApproved,
       },
     });
   } catch (error) {
@@ -313,6 +342,9 @@ router.get("/users", async (req, res) => {
           studentDetails: user.studentDetails,
           isOnline: isRealOnline,
           lastActive: user.lastActive || user.updatedAt || user.createdAt,
+          location: user.location || { lat: null, lng: null, city: "", country: "", allowed: false },
+          currentPage: user.currentPage || "/",
+          deviceInfo: user.deviceInfo || {},
           createdAt: user.createdAt,
         };
       }),
@@ -322,15 +354,29 @@ router.get("/users", async (req, res) => {
   }
 });
 
-// Real-time Presence Heartbeat
+// Real-time Presence & Location Heartbeat
 router.post("/presence/heartbeat", async (req, res) => {
   try {
-    const { userId, isOnline = true } = req.body;
+    const { userId, isOnline = true, location, lat, lng, city, country, accuracy, allowed, currentPage, deviceInfo } = req.body;
     if (userId && mongoose.Types.ObjectId.isValid(userId)) {
-      await User.findByIdAndUpdate(userId, {
+      const updateData = {
         isOnline: Boolean(isOnline),
         lastActive: new Date(),
-      });
+      };
+      if (currentPage) updateData.currentPage = currentPage;
+      if (deviceInfo) updateData.deviceInfo = deviceInfo;
+      if (location || lat !== undefined) {
+        updateData.location = {
+          lat: lat !== undefined ? lat : location?.lat,
+          lng: lng !== undefined ? lng : location?.lng,
+          city: city || location?.city || "",
+          country: country || location?.country || "",
+          accuracy: accuracy !== undefined ? accuracy : location?.accuracy,
+          allowed: allowed !== undefined ? allowed : (location?.allowed || true),
+          updatedAt: new Date(),
+        };
+      }
+      await User.findByIdAndUpdate(userId, updateData);
     }
     return res.json({ success: true, timestamp: new Date().toISOString() });
   } catch (e) {
@@ -340,7 +386,7 @@ router.post("/presence/heartbeat", async (req, res) => {
 
 router.put("/users/:id", async (req, res) => {
   try {
-    const { isApproved, role, phone, studentDetails, name, email, level, isOnline, lastActive } = req.body;
+    const { isApproved, role, phone, studentDetails, name, email, level, isOnline, lastActive, location, currentPage, deviceInfo } = req.body;
     const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
@@ -355,6 +401,9 @@ router.put("/users/:id", async (req, res) => {
     if (level !== undefined) user.level = level;
     if (isOnline !== undefined) user.isOnline = isOnline;
     if (lastActive !== undefined) user.lastActive = lastActive;
+    if (location !== undefined) user.location = location;
+    if (currentPage !== undefined) user.currentPage = currentPage;
+    if (deviceInfo !== undefined) user.deviceInfo = deviceInfo;
 
     await user.save();
     res.json({ message: "User updated successfully", user });

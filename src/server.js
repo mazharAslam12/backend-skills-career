@@ -39,24 +39,37 @@ app.get("/", (req, res) => {
   });
 });
 
-// Dynamic XML Sitemap Generator for Google Search Console Indexing
+import CollectionItem from "./models/CollectionItem.js";
+
+// Helper for slug generation
+const toSlug = (text) => (text || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+
+// Comprehensive Dynamic XML Sitemap Generator for Google Search Console & Image Indexing
 app.get("/sitemap.xml", async (req, res) => {
   try {
-    const users = await User.find({}, "_id name avatar banner updatedAt createdAt");
     const baseUrl = process.env.FRONTEND_URL || "https://skills-career.netlify.app";
+    const users = await User.find({}, "_id name avatar banner updatedAt createdAt").limit(2000);
+    const blogItems = await CollectionItem.find({ collectionName: "blogs" }).limit(50000);
 
     const staticRoutes = [
-      { url: "/", priority: "1.0", changefreq: "daily" },
-      { url: "/login", priority: "0.8", changefreq: "monthly" },
-      { url: "/register", priority: "0.8", changefreq: "monthly" },
-      { url: "/terms", priority: "0.5", changefreq: "yearly" },
-      { url: "/privacy", priority: "0.5", changefreq: "yearly" },
+      { url: "/", priority: "1.0", changefreq: "daily", title: "Skills Career | Home" },
+      { url: "/about", priority: "0.95", changefreq: "weekly", title: "About Skills Career & Mazhar DevX" },
+      { url: "/courses", priority: "0.95", changefreq: "weekly", title: "Full Stack Courses & Programs" },
+      { url: "/curriculum", priority: "0.95", changefreq: "weekly", title: "8-Module Software Engineering Curriculum" },
+      { url: "/admissions", priority: "0.90", changefreq: "weekly", title: "Admissions & Enrollment" },
+      { url: "/blogs", priority: "0.98", changefreq: "hourly", title: "Technology, Coding & Tech Price Blogs Archive" },
+      { url: "/faq", priority: "0.85", changefreq: "monthly", title: "Frequently Asked Questions" },
+      { url: "/contact", priority: "0.85", changefreq: "monthly", title: "Contact & Mentorship Support" },
+      { url: "/login", priority: "0.80", changefreq: "monthly", title: "Student Portal Login" },
+      { url: "/register", priority: "0.80", changefreq: "monthly", title: "Student Registration" },
+      { url: "/terms", priority: "0.50", changefreq: "yearly", title: "Terms of Service" },
+      { url: "/privacy", priority: "0.50", changefreq: "yearly", title: "Privacy Policy" },
     ];
 
     let xml = `<?xml version="1.0" encoding="UTF-8"?>\n`;
     xml += `<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9" xmlns:image="http://www.google.com/schemas/sitemap-image/1.1">\n`;
 
-    // Static Pages
+    // 1. Static Pages
     staticRoutes.forEach(route => {
       xml += `  <url>\n`;
       xml += `    <loc>${baseUrl}${route.url}</loc>\n`;
@@ -65,7 +78,31 @@ app.get("/sitemap.xml", async (req, res) => {
       xml += `  </url>\n`;
     });
 
-    // Dynamic Student Profiles (Each separate ID as a Google Search index page)
+    // 2. Dynamic Blog Posts from MongoDB Collection
+    blogItems.forEach(item => {
+      const bData = item.data || {};
+      const blogId = bData.id || item._id.toString();
+      const slug = toSlug(bData.title) || blogId;
+      const lastMod = (item.updatedAt || item.createdAt || new Date()).toISOString();
+      const title = bData.title || "Skills Career Technology Article";
+      const image = bData.image || item.fileData || "";
+
+      xml += `  <url>\n`;
+      xml += `    <loc>${baseUrl}/blogs/${slug}</loc>\n`;
+      xml += `    <lastmod>${lastMod}</lastmod>\n`;
+      xml += `    <changefreq>daily</changefreq>\n`;
+      xml += `    <priority>0.95</priority>\n`;
+      if (image && image.startsWith("http")) {
+        xml += `    <image:image>\n`;
+        xml += `      <image:loc>${encodeURI(image)}</image:loc>\n`;
+        xml += `      <image:title><![CDATA[${title}]]></image:title>\n`;
+        xml += `      <image:caption><![CDATA[${bData.summary || title}]]></image:caption>\n`;
+        xml += `    </image:image>\n`;
+      }
+      xml += `  </url>\n`;
+    });
+
+    // 3. Dynamic Student Profiles
     users.forEach(u => {
       const uId = u._id.toString();
       const lastMod = (u.updatedAt || u.createdAt || new Date()).toISOString();
@@ -73,17 +110,17 @@ app.get("/sitemap.xml", async (req, res) => {
       xml += `    <loc>${baseUrl}/student/${uId}</loc>\n`;
       xml += `    <lastmod>${lastMod}</lastmod>\n`;
       xml += `    <changefreq>weekly</changefreq>\n`;
-      xml += `    <priority>0.9</priority>\n`;
-      if (u.avatar) {
+      xml += `    <priority>0.85</priority>\n`;
+      if (u.avatar && u.avatar.startsWith("http")) {
         xml += `    <image:image>\n`;
-        xml += `      <image:loc>${u.avatar}</image:loc>\n`;
-        xml += `      <image:title>${u.name || 'Student'} Profile Photo</image:title>\n`;
+        xml += `      <image:loc>${encodeURI(u.avatar)}</image:loc>\n`;
+        xml += `      <image:title><![CDATA[${u.name || "Student"} Profile Photo]]></image:title>\n`;
         xml += `    </image:image>\n`;
       }
-      if (u.banner) {
+      if (u.banner && u.banner.startsWith("http")) {
         xml += `    <image:image>\n`;
-        xml += `      <image:loc>${u.banner}</image:loc>\n`;
-        xml += `      <image:title>${u.name || 'Student'} Cover Banner</image:title>\n`;
+        xml += `      <image:loc>${encodeURI(u.banner)}</image:loc>\n`;
+        xml += `      <image:title><![CDATA[${u.name || "Student"} Cover Banner]]></image:title>\n`;
         xml += `    </image:image>\n`;
       }
       xml += `  </url>\n`;
@@ -91,7 +128,8 @@ app.get("/sitemap.xml", async (req, res) => {
 
     xml += `</urlset>`;
 
-    res.header("Content-Type", "application/xml");
+    res.header("Content-Type", "application/xml; charset=utf-8");
+    res.header("Cache-Control", "public, max-age=3600, s-maxage=3600");
     return res.status(200).send(xml);
   } catch (error) {
     console.error("Sitemap generation error:", error);
