@@ -51,6 +51,16 @@ router.post("/:collection", async (req, res) => {
     const collection = req.params.collection.toLowerCase();
     const { assignedTo, fileData, fileName, ...data } = req.body;
 
+    // Guard: MongoDB BSON document limit is 16MB.
+    // Base64 encoding adds ~33% overhead, so 10MB raw = ~13.3MB base64 = safe.
+    // Reject if fileData exceeds 12MB (base64 chars) to stay under BSON limit.
+    if (fileData && fileData.length > 12 * 1024 * 1024) {
+      return res.status(413).json({
+        message: "File too large for cloud storage.",
+        error: "Video files over ~9MB must be uploaded to YouTube first, then paste the YouTube link instead. This is the safest way to share videos on all devices."
+      });
+    }
+
     const item = await CollectionItem.create({
       collectionName: collection,
       data: data,

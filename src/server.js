@@ -6,6 +6,7 @@ import dataRoutes from "./routes/dataRoutes.js";
 import authRoutes from "./routes/authRoutes.js";
 import collectionRoutes from "./routes/collectionRoutes.js";
 import productRoutes from "./routes/productRoutes.js";
+import recaptchaRoutes from "./routes/recaptchaRoutes.js";
 import User from "./models/User.js";
 
 dotenv.config();
@@ -24,7 +25,8 @@ app.use(async (req, res, next) => {
 });
 
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
+app.use(express.json({ limit: "25mb" }));
+app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
 // Resolve Google Login COOP issue
 app.use((req, res, next) => {
@@ -141,6 +143,7 @@ app.use("/api/data", dataRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/collections", collectionRoutes);
 app.use("/api/products", productRoutes);
+app.use("/api/recaptcha", recaptchaRoutes);
 
 if (process.env.NODE_ENV !== "production") {
   const PORT = process.env.PORT || 5000;
