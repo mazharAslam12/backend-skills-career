@@ -28,21 +28,60 @@ router.get("/:collection", async (req, res) => {
   try {
     const collection = req.params.collection.toLowerCase();
     const userId = req.query.userId;
+    const includeFileData = req.query.includeFileData === 'true';
 
     let query = { collectionName: collection };
     if (userId) {
-      query.$or = [
-        { assignedTo: userId },
-        { assignedTo: { $size: 0 } },
-        { assignedTo: { $exists: false } },
-        { assignedTo: null }
-      ];
+      if (collection === 'message') {
+        query = {
+          collectionName: 'message',
+          $or: [
+            { 'data.senderId': String(userId) },
+            { 'data.receiverId': String(userId) },
+            { 'data.chatId': { $regex: 'group_' } },
+            { 'data.members': String(userId) },
+            { assignedTo: String(userId) },
+          ]
+        };
+      } else {
+        query.$or = [
+          { assignedTo: userId },
+          { assignedTo: { $size: 0 } },
+          { assignedTo: { $exists: false } },
+          { assignedTo: null }
+        ];
+      }
     }
 
-    const items = await CollectionItem.find(query).sort({ createdAt: -1 });
+    // Exclude heavy binary fileData when listing streamvideos, attachmentsbook, or messages (instant load in ms instead of 50MB+ download)
+    let projection = {};
+    if ((collection === 'streamvideos' || collection === 'attachmentsbook') && !includeFileData) {
+      projection = { fileData: 0 };
+    }
+
+    let queryExec = CollectionItem.find(query, projection).sort({ createdAt: -1 });
+    if (collection === 'message') {
+      const limit = parseInt(req.query.limit, 10) || 1500;
+      queryExec = queryExec.limit(limit);
+    }
+
+    const items = await queryExec;
     res.json(items.map(formatItem));
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch collection items", error: error.message });
+  }
+});
+
+router.get("/:collection/:id", async (req, res) => {
+  try {
+    const collection = req.params.collection.toLowerCase();
+    const item = await findCollectionItem(collection, req.params.id);
+    if (!item) {
+      return res.status(404).json({ message: "Collection item not found" });
+    }
+    return res.json(formatItem(item));
+  } catch (error) {
+    return res.status(500).json({ message: "Failed to fetch collection item", error: error.message });
   }
 });
 
