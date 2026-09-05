@@ -13,21 +13,6 @@ dotenv.config();
 
 const app = express();
 
-// ── CORS must be first — before DB middleware so preflight OPTIONS never gets blocked ──
-const corsOptions = {
-  origin: (origin, callback) => {
-    // Allow all origins (localhost dev, netlify production, vercel, etc.)
-    callback(null, true);
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
-  optionsSuccessStatus: 200, // Some legacy browsers choke on 204
-};
-app.use(cors(corsOptions));
-// Explicitly handle all OPTIONS preflight requests immediately
-app.options("*", cors(corsOptions));
-
 // Database Connection Middleware
 app.use(async (req, res, next) => {
   try {
@@ -39,6 +24,12 @@ app.use(async (req, res, next) => {
   }
 });
 
+app.use(cors({
+  origin: true,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+  allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept"]
+}));
 app.use(express.json({ limit: "25mb" }));
 app.use(express.urlencoded({ limit: "25mb", extended: true }));
 
