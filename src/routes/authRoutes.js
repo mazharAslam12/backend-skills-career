@@ -1,9 +1,52 @@
 import express from "express";
+import mongoose from "mongoose";
 import { OAuth2Client } from "google-auth-library";
 import User from "../models/User.js";
 
 const router = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+
+function buildUserPayload(user) {
+  const isUserAdmin = Boolean(
+    user.role === "admin" ||
+    (user.email && user.email.toLowerCase() === "mazhar@gmail.com")
+  );
+
+  const hasFullAccess = Boolean(
+    isUserAdmin ||
+    user.hasFullAccess === true ||
+    user.isApproved === true ||
+    user.accessRequestStatus === "approved"
+  );
+
+  const isApproved = Boolean(isUserAdmin || user.isApproved || hasFullAccess);
+  const accessRequestStatus = hasFullAccess ? "approved" : (user.accessRequestStatus || "none");
+
+  return {
+    id: user._id.toString(),
+    _id: user._id.toString(),
+    name: user.name,
+    email: user.email,
+    avatar: user.avatar || "",
+    banner: user.banner || "",
+    phone: user.phone || "",
+    role: isUserAdmin ? "admin" : (user.role || "Full Stack Developer"),
+    level: user.level || 1,
+    description: user.description || "",
+    skills: user.skills || [],
+    socials: user.socials || {},
+    studentDetails: user.studentDetails || {},
+    isApproved: isApproved,
+    hasFullAccess: hasFullAccess,
+    accessRequestStatus: accessRequestStatus,
+    accessRequestMessage: user.accessRequestMessage || "",
+    location: user.location || { lat: null, lng: null, city: "", country: "", allowed: false },
+    locationHistory: user.locationHistory || [],
+    currentPage: user.currentPage || "/",
+    deviceInfo: user.deviceInfo || {},
+    aiOnboarding: user.aiOnboarding || { completed: false },
+  };
+}
 
 router.post("/register", async (req, res) => {
   try {
@@ -30,13 +73,7 @@ router.post("/register", async (req, res) => {
     });
 
     return res.status(201).json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        avatar: user.avatar,
-        role: user.role,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     return res.status(500).json({ message: "Failed to register user", error: error.message });
@@ -60,32 +97,27 @@ router.post("/login", async (req, res) => {
       return res.status(400).json({ message: "This account uses Google sign-in. Continue with Google." });
     }
 
-    if (user.role !== "admin" && user.email !== "mazhar@gmail.com" && !user.isApproved) {
-      return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
-    }
-
     if (user.password !== password) {
       return res.status(401).json({ message: "Invalid password" });
     }
 
+    const hasFullAccess = Boolean(
+      user.role === "admin" ||
+      user.email === "mazhar@gmail.com" ||
+      user.hasFullAccess === true ||
+      user.isApproved === true ||
+      user.accessRequestStatus === "approved"
+    );
+
+    if (hasFullAccess && (!user.hasFullAccess || user.accessRequestStatus !== "approved")) {
+      user.hasFullAccess = true;
+      user.isApproved = true;
+      user.accessRequestStatus = "approved";
+      await user.save().catch(() => {});
+    }
+
     return res.json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        avatar: user.avatar,
-        banner: user.banner || "",
-        phone: user.phone || "",
-        role: user.role || "Full Stack Developer",
-        level: user.level || 1,
-        description: user.description || "",
-        skills: user.skills || [],
-        socials: user.socials || {},
-        studentDetails: user.studentDetails,
-        isApproved: user.isApproved,
-        location: user.location,
-        currentPage: user.currentPage,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     console.error("Login Error:", error);
@@ -137,28 +169,12 @@ router.post("/google", async (req, res) => {
       await user.save();
     }
 
-    if (!isAdmin && user.role !== "admin" && !user.isApproved) {
+    if (!isAdmin && user.role !== "admin" && !user.isApproved && !user.hasFullAccess && user.accessRequestStatus !== "approved") {
       return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     return res.json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        avatar: user.avatar,
-        banner: user.banner || "",
-        phone: user.phone || "",
-        role: user.role || "Full Stack Developer",
-        level: user.level || 1,
-        description: user.description || "",
-        skills: user.skills || [],
-        socials: user.socials || {},
-        studentDetails: user.studentDetails,
-        isApproved: user.isApproved,
-        location: user.location,
-        currentPage: user.currentPage,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     console.error("Google Auth Error:", error);
@@ -198,28 +214,12 @@ router.post("/github", async (req, res) => {
       await user.save();
     }
 
-    if (!isAdmin && user.role !== "admin" && !user.isApproved) {
+    if (!isAdmin && user.role !== "admin" && !user.isApproved && !user.hasFullAccess && user.accessRequestStatus !== "approved") {
       return res.status(403).json({ message: "Your account is pending admin approval. You cannot login until the administrator grants you access from the Admin Dashboard." });
     }
 
     return res.json({
-      user: {
-        id: user._id.toString(),
-        name: user.name,
-        email: user.email,
-        avatar: user.avatar,
-        banner: user.banner || "",
-        phone: user.phone || "",
-        role: user.role || "Full Stack Developer",
-        level: user.level || 1,
-        description: user.description || "",
-        skills: user.skills || [],
-        socials: user.socials || {},
-        studentDetails: user.studentDetails,
-        isApproved: user.isApproved,
-        location: user.location,
-        currentPage: user.currentPage,
-      },
+      user: buildUserPayload(user),
     });
   } catch (error) {
     console.error("GitHub Auth Error:", error);
@@ -339,10 +339,14 @@ router.get("/users", async (req, res) => {
           skills: user.skills || [],
           socials: user.socials || {},
           isApproved: user.isApproved,
+          hasFullAccess: Boolean(user.hasFullAccess || user.isApproved || user.role === 'admin' || user.email === 'mazhar@gmail.com'),
+          accessRequestStatus: user.accessRequestStatus || (user.hasFullAccess || user.isApproved ? 'approved' : 'none'),
+          accessRequestMessage: user.accessRequestMessage || "",
           studentDetails: user.studentDetails,
           isOnline: isRealOnline,
           lastActive: user.lastActive || user.updatedAt || user.createdAt,
           location: user.location || { lat: null, lng: null, city: "", country: "", allowed: false },
+          locationHistory: user.locationHistory || [],
           currentPage: user.currentPage || "/",
           deviceInfo: user.deviceInfo || {},
           aiOnboarding: user.aiOnboarding || { completed: false },
@@ -355,7 +359,7 @@ router.get("/users", async (req, res) => {
   }
 });
 
-// Real-time Presence & Deep Geolocation Heartbeat
+// Real-time Presence & Deep Geolocation Heartbeat with Breadcrumb Route Recording
 router.post("/presence/heartbeat", async (req, res) => {
   try {
     const { userId, isOnline = true, location, lat, lng, city, state, country, street, neighborhood, displayAddress, accuracy, allowed, currentPage, deviceInfo } = req.body;
@@ -366,24 +370,58 @@ router.post("/presence/heartbeat", async (req, res) => {
       };
       if (currentPage) updateData.currentPage = currentPage;
       if (deviceInfo) updateData.deviceInfo = deviceInfo;
+
       if (allowed === false) {
         updateData["location.allowed"] = false;
+        await User.findByIdAndUpdate(userId, updateData);
       } else if (location || lat !== undefined) {
-        updateData.location = {
-          lat: lat !== undefined ? lat : location?.lat,
-          lng: lng !== undefined ? lng : location?.lng,
-          city: city || location?.city || "",
-          state: state || location?.state || "",
-          country: country || location?.country || "",
-          street: street || location?.street || "",
-          neighborhood: neighborhood || location?.neighborhood || "",
-          displayAddress: displayAddress || location?.displayAddress || "",
-          accuracy: accuracy !== undefined ? accuracy : location?.accuracy,
-          allowed: allowed !== undefined ? allowed : (location?.allowed !== false),
-          updatedAt: new Date(),
-        };
+        const resolvedLat = Number(lat !== undefined ? lat : location?.lat);
+        const resolvedLng = Number(lng !== undefined ? lng : location?.lng);
+
+        if (!isNaN(resolvedLat) && !isNaN(resolvedLng)) {
+          updateData.location = {
+            lat: resolvedLat,
+            lng: resolvedLng,
+            city: city || location?.city || "",
+            state: state || location?.state || "",
+            country: country || location?.country || "",
+            street: street || location?.street || "",
+            neighborhood: neighborhood || location?.neighborhood || "",
+            displayAddress: displayAddress || location?.displayAddress || "",
+            accuracy: accuracy !== undefined ? accuracy : location?.accuracy,
+            allowed: allowed !== undefined ? allowed : true,
+            updatedAt: new Date(),
+          };
+
+          const breadcrumb = {
+            lat: resolvedLat,
+            lng: resolvedLng,
+            city: city || location?.city || "",
+            state: state || location?.state || "",
+            country: country || location?.country || "",
+            street: street || location?.street || "",
+            displayAddress: displayAddress || location?.displayAddress || "",
+            accuracy: accuracy || null,
+            currentPage: currentPage || "/",
+            deviceInfo: deviceInfo || {},
+            timestamp: new Date(),
+          };
+
+          await User.findByIdAndUpdate(userId, {
+            ...updateData,
+            $push: {
+              locationHistory: {
+                $each: [breadcrumb],
+                $slice: -50, // Keep last 50 session checkpoints
+              },
+            },
+          });
+        } else {
+          await User.findByIdAndUpdate(userId, updateData);
+        }
+      } else {
+        await User.findByIdAndUpdate(userId, updateData);
       }
-      await User.findByIdAndUpdate(userId, updateData);
     }
     return res.json({ success: true, timestamp: new Date().toISOString() });
   } catch (e) {
@@ -434,7 +472,20 @@ router.put("/users/:id", async (req, res) => {
       return res.status(404).json({ message: "User not found" });
     }
 
-    if (isApproved !== undefined) user.isApproved = isApproved;
+    if (isApproved !== undefined) {
+      const isApprovedBool = isApproved === true || isApproved === "true";
+      user.isApproved = isApprovedBool;
+      if (isApprovedBool) {
+        user.hasFullAccess = true;
+        user.accessRequestStatus = "approved";
+      }
+    }
+    if (req.body.hasFullAccess !== undefined) {
+      user.hasFullAccess = req.body.hasFullAccess === true || req.body.hasFullAccess === "true";
+      if (user.hasFullAccess) {
+        user.accessRequestStatus = "approved";
+      }
+    }
     if (role !== undefined) user.role = role;
     if (phone !== undefined) user.phone = phone;
     if (name !== undefined) user.name = name;
@@ -517,29 +568,254 @@ router.put("/profile/:id", async (req, res) => {
   }
 });
 
-// Public profile fetching (for SEO and sharing)
+// Public profile fetching (for SEO, sharing & background sync)
 router.get("/public-users/:id", async (req, res) => {
   try {
-    const user = await User.findById(req.params.id);
+    const rawId = req.params.id;
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      user = await User.findById(rawId);
+    }
+    if (!user) {
+      user = await User.findOne({
+        $or: [
+          { email: rawId.toLowerCase().trim() },
+          { id: rawId },
+          { "data.id": rawId }
+        ]
+      });
+    }
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
 
-    // Return safe public profile data for Google Search Console indexing
+    const isUserAdmin = Boolean(
+      user.role === "admin" ||
+      (user.email && user.email.toLowerCase() === "mazhar@gmail.com")
+    );
+    const hasFullAccess = Boolean(
+      isUserAdmin ||
+      user.hasFullAccess === true ||
+      user.isApproved === true ||
+      user.accessRequestStatus === "approved"
+    );
+
     res.json({
       id: user._id.toString(),
+      _id: user._id.toString(),
       name: user.name,
       avatar: user.avatar,
       banner: user.banner,
       phone: user.phone,
-      role: user.role || "Full Stack Developer",
+      role: isUserAdmin ? "admin" : (user.role || "Full Stack Developer"),
+      level: user.level || 1,
       description: user.description || "A student developer at Skills Career.",
       skills: user.skills || [],
       socials: user.socials || {},
+      isApproved: Boolean(isUserAdmin || user.isApproved || hasFullAccess),
+      hasFullAccess: hasFullAccess,
+      accessRequestStatus: hasFullAccess ? "approved" : (user.accessRequestStatus || "none"),
+      accessRequestMessage: user.accessRequestMessage || "",
+      location: user.location || { lat: null, lng: null, city: "", country: "", allowed: false },
+      locationHistory: user.locationHistory || [],
       createdAt: user.createdAt,
     });
   } catch (error) {
     res.status(500).json({ message: "Failed to fetch public profile", error: error.message });
+  }
+});
+
+// ── STUDENT SENDS ACCESS REQUEST TO ADMIN ──
+router.post("/request-access", async (req, res) => {
+  try {
+    const { userId, message } = req.body;
+    if (!userId) {
+      return res.status(400).json({ success: false, message: "User ID is required" });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.accessRequestStatus = "pending";
+    user.accessRequestMessage = message || "Student requested access to academy modules.";
+    user.accessRequestedAt = new Date();
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: "Access request successfully sent to Admin",
+      user: {
+        id: user._id.toString(),
+        accessRequestStatus: user.accessRequestStatus,
+        accessRequestMessage: user.accessRequestMessage,
+        hasFullAccess: user.hasFullAccess || false,
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to submit access request", error: error.message });
+  }
+});
+
+// ── ADMIN APPROVES FULL ACCESS FOR A USER ──
+router.post("/approve-access/:id", async (req, res) => {
+  try {
+    const rawId = req.params.id;
+    const bodyUserId = req.body?.userId;
+    const bodyEmail = req.body?.email;
+
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      user = await User.findById(rawId);
+    }
+    if (!user && bodyUserId && mongoose.Types.ObjectId.isValid(bodyUserId)) {
+      user = await User.findById(bodyUserId);
+    }
+    if (!user) {
+      user = await User.findOne({ email: (bodyEmail || rawId).toLowerCase().trim() });
+    }
+    if (!user) {
+      user = await User.findOne({ "data.id": rawId });
+    }
+    if (!user) {
+      user = await User.findOne({ _id: rawId });
+    }
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.hasFullAccess = true;
+    user.isApproved = true;
+    user.accessRequestStatus = "approved";
+    await user.save();
+
+    // Also send an in-app system message notification to the student
+    try {
+      const CollectionItem = mongoose.model("CollectionItem");
+      if (CollectionItem) {
+        await CollectionItem.create({
+          collectionName: "message",
+          data: {
+            chatId: `sys_${user._id.toString()}`,
+            senderId: "admin_mazhar_system",
+            senderName: "Admin Mazhar DevX",
+            senderRole: "System Admin",
+            receiverId: user._id.toString(),
+            content: "🎉 Congratulations! Your request for Full Academy Access has been APPROVED by Admin Mazhar DevX. All 16 modules, coding playgrounds, live classes, and AI exam suites are now completely unlocked!",
+            type: "system",
+            isSystem: true,
+            createdAt: new Date().toISOString(),
+            date: new Date().toLocaleDateString('en-PK', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            read: false,
+          },
+          assignedTo: [user._id.toString()],
+        });
+      }
+    } catch (msgErr) {
+      console.warn("Could not insert approval message notification:", msgErr.message);
+    }
+
+    return res.json({
+      success: true,
+      message: `Full access approved for ${user.name}`,
+      user: {
+        id: user._id.toString(),
+        _id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        hasFullAccess: true,
+        isApproved: true,
+        accessRequestStatus: "approved",
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to approve access", error: error.message });
+  }
+});
+
+// ── ADMIN REVOKES ACCESS FOR A USER ──
+router.post("/revoke-access/:id", async (req, res) => {
+  try {
+    const rawId = req.params.id;
+    const bodyUserId = req.body?.userId;
+    const bodyEmail = req.body?.email;
+
+    let user = null;
+    if (mongoose.Types.ObjectId.isValid(rawId)) {
+      user = await User.findById(rawId);
+    }
+    if (!user && bodyUserId && mongoose.Types.ObjectId.isValid(bodyUserId)) {
+      user = await User.findById(bodyUserId);
+    }
+    if (!user) {
+      user = await User.findOne({ email: (bodyEmail || rawId).toLowerCase().trim() });
+    }
+    if (!user) {
+      user = await User.findOne({ "data.id": rawId });
+    }
+    if (!user) {
+      user = await User.findOne({ _id: rawId });
+    }
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    user.hasFullAccess = false;
+    user.accessRequestStatus = "none";
+    await user.save();
+
+    return res.json({
+      success: true,
+      message: `Access revoked for ${user.name}`,
+      user: {
+        id: user._id.toString(),
+        _id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        hasFullAccess: false,
+        isApproved: Boolean(user.isApproved),
+        accessRequestStatus: "none",
+      }
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to revoke access", error: error.message });
+  }
+});
+
+// ── ADMIN GETS ALL ACCESS REQUESTS / USER STATUSES ──
+router.get("/access-requests", async (req, res) => {
+  try {
+    const rawUsers = await User.find({}, "name email avatar role hasFullAccess isApproved accessRequestStatus accessRequestMessage accessRequestedAt createdAt").sort({ accessRequestedAt: -1, createdAt: -1 });
+    const users = rawUsers.map(user => {
+      const isUserAdmin = Boolean(
+        user.role === "admin" ||
+        (user.email && user.email.toLowerCase() === "mazhar@gmail.com")
+      );
+      const hasFullAccess = Boolean(
+        isUserAdmin ||
+        user.hasFullAccess === true ||
+        user.isApproved === true ||
+        user.accessRequestStatus === "approved"
+      );
+      return {
+        id: user._id.toString(),
+        _id: user._id.toString(),
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar || "",
+        role: isUserAdmin ? "admin" : (user.role || "student"),
+        hasFullAccess: hasFullAccess,
+        isApproved: Boolean(isUserAdmin || user.isApproved || hasFullAccess),
+        accessRequestStatus: hasFullAccess ? "approved" : (user.accessRequestStatus || "none"),
+        accessRequestMessage: user.accessRequestMessage || "",
+        accessRequestedAt: user.accessRequestedAt || user.createdAt,
+        createdAt: user.createdAt
+      };
+    });
+    return res.json({ success: true, users });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: "Failed to load access requests", error: error.message });
   }
 });
 

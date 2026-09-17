@@ -31,6 +31,12 @@ const collectionItemSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+collectionItemSchema.index({ collectionName: 1, createdAt: -1 });
+collectionItemSchema.index({ collectionName: 1, "data.senderId": 1 });
+collectionItemSchema.index({ collectionName: 1, "data.receiverId": 1 });
+collectionItemSchema.index({ collectionName: 1, "data.chatId": 1 });
+
 const CollectionItem = mongoose.model("CollectionItem", collectionItemSchema);
 
 export default CollectionItem;
+

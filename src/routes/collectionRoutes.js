@@ -14,35 +14,62 @@ const formatItem = (item) => ({
 });
 
 const findCollectionItem = async (collection, id) => {
+  const rawCol = String(collection || '').toLowerCase();
+  const isMsg = rawCol === 'message' || rawCol === 'messages';
+  const isVid = rawCol === 'streamvideos' || rawCol === 'videos' || rawCol === 'streamvideo';
+  const colFilter = isMsg ? { $in: ['message', 'messages'] } : (isVid ? { $in: ['streamvideos', 'videos', 'streamvideo'] } : rawCol);
+
   if (mongoose.Types.ObjectId.isValid(id) && String(new mongoose.Types.ObjectId(id)) === id) {
     const byMongoId = await CollectionItem.findOne({
       _id: id,
-      collectionName: collection,
+      collectionName: colFilter,
     });
     if (byMongoId) return byMongoId;
   }
-  return CollectionItem.findOne({ collectionName: collection, "data.id": id });
+  return CollectionItem.findOne({
+    collectionName: colFilter,
+    $or: [
+      { "data.id": id },
+      { "data._id": id },
+      { "data.tempId": id },
+      { "data.messageId": id },
+      { "data._mongoId": id }
+    ]
+  });
 };
 
 router.get("/:collection", async (req, res) => {
   try {
-    const collection = req.params.collection.toLowerCase();
+    const rawCollection = req.params.collection.toLowerCase();
+    const isMessageCol = (rawCollection === 'message' || rawCollection === 'messages');
+    const isVideoCol = (rawCollection === 'streamvideos' || rawCollection === 'videos' || rawCollection === 'streamvideo');
+    const collectionFilter = isMessageCol
+      ? { $in: ['message', 'messages'] }
+      : (isVideoCol ? { $in: ['streamvideos', 'videos', 'streamvideo'] } : rawCollection);
+
     const userId = req.query.userId;
     const includeFileData = req.query.includeFileData === 'true';
 
-    let query = { collectionName: collection };
-    if (userId) {
-      if (collection === 'message') {
-        query = {
-          collectionName: 'message',
-          $or: [
-            { 'data.senderId': String(userId) },
-            { 'data.receiverId': String(userId) },
-            { 'data.chatId': { $regex: 'group_' } },
-            { 'data.members': String(userId) },
-            { assignedTo: String(userId) },
-          ]
-        };
+    let query = { collectionName: collectionFilter };
+    const chatId = req.query.chatId;
+
+    if (chatId) {
+      query.$or = [
+        { 'data.chatId': String(chatId) },
+        { 'data.id': String(chatId) }
+      ];
+    } else if (userId) {
+      if (isMessageCol) {
+        query.$or = [
+          { 'data.senderId': String(userId) },
+          { 'data.receiverId': String(userId) },
+          { 'data.chatId': { $regex: String(userId) } },
+          { 'data.chatId': { $regex: 'group_' } },
+          { 'data.chatId': 'ai_bot_chat' },
+          { 'data.receiverId': 'ai_bot' },
+          { 'data.members': String(userId) },
+          { assignedTo: String(userId) },
+        ];
       } else {
         query.$or = [
           { assignedTo: userId },
@@ -55,14 +82,16 @@ router.get("/:collection", async (req, res) => {
 
     // Exclude heavy binary fileData when listing streamvideos, attachmentsbook, or messages (instant load in ms instead of 50MB+ download)
     let projection = {};
-    if ((collection === 'streamvideos' || collection === 'attachmentsbook') && !includeFileData) {
+    if ((isVideoCol || rawCollection === 'attachmentsbook') && !includeFileData) {
       projection = { fileData: 0 };
     }
 
     let queryExec = CollectionItem.find(query, projection).sort({ createdAt: -1 });
-    if (collection === 'message') {
-      const limit = parseInt(req.query.limit, 10) || 1500;
+    if (isMessageCol) {
+      const limit = parseInt(req.query.limit, 10) || 2500;
       queryExec = queryExec.limit(limit);
+    } else if (rawCollection === 'signals') {
+      queryExec = queryExec.limit(50);
     }
 
     const items = await queryExec;
@@ -74,7 +103,8 @@ router.get("/:collection", async (req, res) => {
 
 router.get("/:collection/:id", async (req, res) => {
   try {
-    const collection = req.params.collection.toLowerCase();
+    const rawCollection = req.params.collection.toLowerCase();
+    const collection = (rawCollection === 'messages') ? 'message' : (rawCollection === 'videos' || rawCollection === 'streamvideo' ? 'streamvideos' : rawCollection);
     const item = await findCollectionItem(collection, req.params.id);
     if (!item) {
       return res.status(404).json({ message: "Collection item not found" });
@@ -87,7 +117,8 @@ router.get("/:collection/:id", async (req, res) => {
 
 router.post("/:collection", async (req, res) => {
   try {
-    const collection = req.params.collection.toLowerCase();
+    const rawCollection = req.params.collection.toLowerCase();
+    const collection = (rawCollection === 'messages') ? 'message' : (rawCollection === 'videos' || rawCollection === 'streamvideo' ? 'streamvideos' : rawCollection);
     const { assignedTo, fileData, fileName, ...data } = req.body;
 
     // Guard: MongoDB BSON document limit is 16MB.
@@ -116,6 +147,8 @@ router.post("/:collection", async (req, res) => {
 router.put("/:collection/:id", async (req, res) => {
   try {
     const { assignedTo, fileData, fileName, ...data } = req.body;
+    const rawCollection = req.params.collection.toLowerCase();
+    const collection = (rawCollection === 'messages') ? 'message' : (rawCollection === 'videos' || rawCollection === 'streamvideo' ? 'streamvideos' : rawCollection);
 
     // Build $set using dot-notation to PATCH individual fields inside data,
     // NOT replace the whole data object (which would wipe senderId, content, etc.)
@@ -125,12 +158,11 @@ router.put("/:collection/:id", async (req, res) => {
     });
 
     // Also update top-level fields if provided
-    setFields.collectionName = req.params.collection.toLowerCase();
+    setFields.collectionName = collection;
     if (assignedTo !== undefined) setFields.assignedTo = assignedTo;
     if (fileData !== undefined) setFields.fileData = fileData;
     if (fileName !== undefined) setFields.fileName = fileName;
 
-    const collection = req.params.collection.toLowerCase();
     const existing = await findCollectionItem(collection, req.params.id);
     if (!existing) {
       return res.status(404).json({ message: "Collection item not found" });
@@ -139,7 +171,7 @@ router.put("/:collection/:id", async (req, res) => {
     const updated = await CollectionItem.findByIdAndUpdate(
       existing._id,
       { $set: setFields },
-      { new: true, runValidators: true },
+      { returnDocument: 'after', runValidators: true },
     );
     if (!updated) {
       return res.status(404).json({ message: "Collection item not found" });
@@ -152,7 +184,8 @@ router.put("/:collection/:id", async (req, res) => {
 
 router.delete("/:collection/:id", async (req, res) => {
   try {
-    const collection = req.params.collection.toLowerCase();
+    const rawCollection = req.params.collection.toLowerCase();
+    const collection = (rawCollection === 'messages') ? 'message' : (rawCollection === 'videos' || rawCollection === 'streamvideo' ? 'streamvideos' : rawCollection);
     const existing = await findCollectionItem(collection, req.params.id);
     if (!existing) {
       return res.status(404).json({ message: "Collection item not found" });

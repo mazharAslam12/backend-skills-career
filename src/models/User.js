@@ -75,6 +75,22 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    hasFullAccess: {
+      type: Boolean,
+      default: false,
+    },
+    accessRequestStatus: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+    },
+    accessRequestMessage: {
+      type: String,
+      default: "",
+    },
+    accessRequestedAt: {
+      type: Date,
+    },
     studentDetails: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
@@ -100,10 +116,26 @@ const userSchema = new mongoose.Schema(
       allowed: { type: Boolean, default: false },
       updatedAt: { type: Date, default: Date.now },
     },
+    locationHistory: [
+      {
+        lat: { type: Number, required: true },
+        lng: { type: Number, required: true },
+        city: { type: String, default: "" },
+        state: { type: String, default: "" },
+        country: { type: String, default: "" },
+        street: { type: String, default: "" },
+        displayAddress: { type: String, default: "" },
+        accuracy: { type: Number, default: null },
+        currentPage: { type: String, default: "/" },
+        deviceInfo: { type: mongoose.Schema.Types.Mixed, default: {} },
+        timestamp: { type: Date, default: Date.now },
+      }
+    ],
     currentPage: {
       type: String,
       default: "/",
     },
+
     deviceInfo: {
       type: mongoose.Schema.Types.Mixed,
       default: {},
