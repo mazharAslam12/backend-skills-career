@@ -11,6 +11,8 @@ const formatItem = (item) => ({
   assignedTo: item.assignedTo,
   fileName: item.fileName,
   fileData: item.fileData,
+  createdAt: item.data?.createdAt || item.createdAt,
+  updatedAt: item.data?.updatedAt || item.updatedAt,
 });
 
 const findCollectionItem = async (collection, id) => {
@@ -82,8 +84,17 @@ router.get("/:collection", async (req, res) => {
 
     // Exclude heavy binary fileData when listing streamvideos, attachmentsbook, or messages (instant load in ms instead of 50MB+ download)
     let projection = {};
+    const lite = req.query.lite === 'true';
     if ((isVideoCol || rawCollection === 'attachmentsbook') && !includeFileData) {
       projection = { fileData: 0 };
+    }
+    if (isMessageCol && !includeFileData) {
+      projection = { ...projection, fileData: 0 };
+      if (lite) {
+        projection['data.fileData'] = 0;
+        projection['data.fileDataUrl'] = 0;
+        projection['data.audioUrl'] = 0;
+      }
     }
 
     let queryExec = CollectionItem.find(query, projection).sort({ createdAt: -1 });

@@ -1,17 +1,13 @@
 import mongoose from "mongoose";
 
-let connectionPromise = null;
+let isConnected = false;
 let listenersAttached = false;
+let keepAliveInterval = null;
 
 const connectDB = async () => {
-  // 1. Return immediately if already fully connected
-  if (mongoose.connection.readyState === 1) {
+  // Already connected — fast path
+  if (isConnected && mongoose.connection.readyState === 1) {
     return mongoose.connection;
-  }
-
-  // 2. Return in-flight connection promise to prevent concurrent connection attempts (thundering herd)
-  if (connectionPromise) {
-    return connectionPromise;
   }
 
   const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
@@ -21,56 +17,77 @@ const connectDB = async () => {
   }
 
   const opts = {
+    // Don't buffer commands when disconnected — fail fast so UI can retry
+    bufferCommands: false,
     // Atlas replica set election grace period
     serverSelectionTimeoutMS: 30000,
-    // Socket operation timeout
-    socketTimeoutMS: 60000,
-    // Heartbeat to detect failover
-    heartbeatFrequencyMS: 10000,
-    // Connection pool sizing
-    maxPoolSize: 10,
-    minPoolSize: 1,
-    // Wait for connection from pool
+    // Socket operation timeout — keep generous for slow Atlas free tier
+    socketTimeoutMS: 75000,
+    // How often the driver pings Atlas to detect failover
+    heartbeatFrequencyMS: 15000,
+    // Connection pool — enough for concurrent requests
+    maxPoolSize: 15,
+    minPoolSize: 2,
+    // Wait for pool slot before giving up
     waitQueueTimeoutMS: 30000,
+    // Retryable writes — auto-retry transient write errors
+    retryWrites: true,
+    // Retryable reads — auto-retry transient read errors
+    retryReads: true,
   };
 
-  // 3. Attach listeners only once
+  // Attach lifecycle listeners once
   if (!listenersAttached) {
-    mongoose.connection.on("disconnected", () => {
-      console.warn("[MongoDB] Disconnected from Atlas — will auto-reconnect on next request.");
-      connectionPromise = null;
+    mongoose.connection.on("connected", () => {
+      console.log("MongoDB Connected 🔥");
+      isConnected = true;
+      // Keep-alive ping every 30 seconds to prevent Atlas idle timeout
+      if (!keepAliveInterval) {
+        keepAliveInterval = setInterval(async () => {
+          try {
+            if (mongoose.connection.readyState === 1) {
+              await mongoose.connection.db.admin().ping();
+            }
+          } catch (_) {}
+        }, 30000);
+      }
     });
 
-    mongoose.connection.on("error", (err) => {
-      console.error("[MongoDB] Connection error:", err.message);
-      connectionPromise = null;
+    mongoose.connection.on("disconnected", () => {
+      console.warn("[MongoDB] Disconnected — will auto-reconnect on next request.");
+      isConnected = false;
     });
 
     mongoose.connection.on("reconnected", () => {
       console.log("[MongoDB] Reconnected 🔄");
+      isConnected = true;
+    });
+
+    mongoose.connection.on("error", (err) => {
+      console.error("[MongoDB] Connection error:", err.message);
+      isConnected = false;
+    });
+
+    mongoose.connection.on("close", () => {
+      isConnected = false;
+      if (keepAliveInterval) {
+        clearInterval(keepAliveInterval);
+        keepAliveInterval = null;
+      }
     });
 
     listenersAttached = true;
   }
 
-  // 4. Start connection and cache promise
-  connectionPromise = mongoose.connect(uri, opts)
-    .then((conn) => {
-      console.log("MongoDB Connected 🔥");
-      return conn;
-    })
-    .catch((error) => {
-      console.error("MongoDB connection failed:", error.message);
-      connectionPromise = null;
-      throw error;
-    })
-    .finally(() => {
-      // Clear in-flight promise once connection state has settled
-      connectionPromise = null;
-    });
-
-  return connectionPromise;
+  try {
+    await mongoose.connect(uri, opts);
+    isConnected = true;
+    return mongoose.connection;
+  } catch (error) {
+    console.error("MongoDB connection failed:", error.message);
+    isConnected = false;
+    throw error;
+  }
 };
 
 export default connectDB;
-

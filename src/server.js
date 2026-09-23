@@ -31,23 +31,32 @@ app.use((req, res, next) => {
   next();
 });
 
-// 2. Database Connection Middleware
+// 2. Database Connection Middleware — retries 3× before returning 503
 app.use(async (req, res, next) => {
   // Fast pass for preflight OPTIONS, root status, and health probes
   if (req.method === "OPTIONS" || req.path === "/" || req.path === "/health") {
     return next();
   }
 
-  try {
-    await connectDB();
-    next();
-  } catch (err) {
-    console.error("[DB Middleware Error]:", err.message);
-    res.status(503).set("Retry-After", "3").json({
-      message: "Database temporarily reconnecting. Please retry.",
-      error: err.message
-    });
+  let lastErr;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await connectDB();
+      return next();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 3) {
+        // Wait 1 second between retries for transient Atlas reconnect
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
   }
+
+  console.error("[DB Middleware Error]:", lastErr?.message);
+  res.status(503).set("Retry-After", "3").json({
+    message: "Database temporarily reconnecting. Please retry in a moment.",
+    error: lastErr?.message
+  });
 });
 
 
