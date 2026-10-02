@@ -37,6 +37,10 @@ function buildUserPayload(user) {
     socials: user.socials || {},
     studentDetails: user.studentDetails || {},
     isApproved: isApproved,
+    status: user.status || "active",
+    joinDate: user.joinDate || user.createdAt,
+    monthlyFeeAmount: user.monthlyFeeAmount || 5000,
+    feeStatus: user.feeStatus || "none",
     hasFullAccess: hasFullAccess,
     accessRequestStatus: accessRequestStatus,
     accessRequestMessage: user.accessRequestMessage || "",
@@ -339,6 +343,10 @@ router.get("/users", async (req, res) => {
           skills: user.skills || [],
           socials: user.socials || {},
           isApproved: user.isApproved,
+          status: user.status || "active",
+          joinDate: user.joinDate || user.createdAt,
+          monthlyFeeAmount: user.monthlyFeeAmount || 5000,
+          feeStatus: user.feeStatus || "none",
           hasFullAccess: Boolean(user.hasFullAccess || user.isApproved || user.role === 'admin' || user.email === 'mazhar@gmail.com'),
           accessRequestStatus: user.accessRequestStatus || (user.hasFullAccess || user.isApproved ? 'approved' : 'none'),
           accessRequestMessage: user.accessRequestMessage || "",
@@ -362,7 +370,28 @@ router.get("/users", async (req, res) => {
 // Real-time Presence & Deep Geolocation Heartbeat with Breadcrumb Route Recording
 router.post("/presence/heartbeat", async (req, res) => {
   try {
-    const { userId, isOnline = true, location, lat, lng, city, state, country, street, neighborhood, displayAddress, accuracy, allowed, currentPage, deviceInfo } = req.body;
+    const { 
+      userId, 
+      isOnline = true, 
+      location, 
+      lat, 
+      lng, 
+      city, 
+      state, 
+      country, 
+      street, 
+      neighborhood, 
+      displayAddress, 
+      accuracy, 
+      allowed, 
+      currentPage, 
+      deviceInfo,
+      sessionDurationSeconds,
+      sessionStartTime,
+      pageFlow,
+      recentActivities
+    } = req.body;
+
     if (userId && mongoose.Types.ObjectId.isValid(userId)) {
       const updateData = {
         isOnline: Boolean(isOnline),
@@ -370,6 +399,10 @@ router.post("/presence/heartbeat", async (req, res) => {
       };
       if (currentPage) updateData.currentPage = currentPage;
       if (deviceInfo) updateData.deviceInfo = deviceInfo;
+      if (sessionDurationSeconds !== undefined) updateData.sessionDurationSeconds = Number(sessionDurationSeconds);
+      if (sessionStartTime) updateData.sessionStartTime = new Date(sessionStartTime);
+      if (Array.isArray(pageFlow)) updateData.pageFlow = pageFlow;
+      if (Array.isArray(recentActivities)) updateData.recentActivities = recentActivities;
 
       if (allowed === false) {
         updateData["location.allowed"] = false;
@@ -400,10 +433,12 @@ router.post("/presence/heartbeat", async (req, res) => {
             state: state || location?.state || "",
             country: country || location?.country || "",
             street: street || location?.street || "",
+            neighborhood: neighborhood || location?.neighborhood || "",
             displayAddress: displayAddress || location?.displayAddress || "",
             accuracy: accuracy || null,
             currentPage: currentPage || "/",
             deviceInfo: deviceInfo || {},
+            sessionDurationSeconds: sessionDurationSeconds || 0,
             timestamp: new Date(),
           };
 
@@ -495,6 +530,10 @@ router.put("/users/:id", async (req, res) => {
     if (isOnline !== undefined) user.isOnline = isOnline;
     if (lastActive !== undefined) user.lastActive = lastActive;
     if (location !== undefined) user.location = location;
+    if (req.body.status !== undefined) user.status = req.body.status;
+    if (req.body.joinDate !== undefined) user.joinDate = req.body.joinDate;
+    if (req.body.monthlyFeeAmount !== undefined) user.monthlyFeeAmount = req.body.monthlyFeeAmount;
+    if (req.body.feeStatus !== undefined) user.feeStatus = req.body.feeStatus;
     if (currentPage !== undefined) user.currentPage = currentPage;
     if (deviceInfo !== undefined) user.deviceInfo = deviceInfo;
     if (aiOnboarding !== undefined) user.aiOnboarding = { ...user.aiOnboarding, ...aiOnboarding };

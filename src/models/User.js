@@ -75,6 +75,24 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    status: {
+      type: String,
+      enum: ["active", "deactive"],
+      default: "active",
+    },
+    joinDate: {
+      type: Date,
+      default: Date.now,
+    },
+    monthlyFeeAmount: {
+      type: Number,
+      default: 5000,
+    },
+    feeStatus: {
+      type: String,
+      enum: ["paid", "pending", "overdue", "none"],
+      default: "none",
+    },
     hasFullAccess: {
       type: Boolean,
       default: false,
